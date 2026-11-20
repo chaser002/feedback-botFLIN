@@ -1,7 +1,7 @@
 """
-Telegram-бот для участников ЗБТ: приём отчётов о багах, проблемах и идеях по улучшению.
+Telegram-бот открытого бета-тестирования (ОБТ): приём отчётов о багах, проблемах и идеях по улучшению.
 
-Участник выбирает тип отчёта, указывает ник, описывает ситуацию и прикладывает доказательства.
+Любой желающий выбирает тип отчёта, указывает ник, описывает ситуацию и прикладывает доказательства.
 Отчёт получает номер и попадает в группу администраторов, где его обрабатывают. О каждом
 изменении статуса участник узнаёт в личных сообщениях. Библиотека: aiogram 3.x.
 """
@@ -47,14 +47,12 @@ def env_ids(name: str) -> set:
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_CHAT_ID = env_int("ADMIN_CHAT_ID")  # группа администраторов
-ADMIN_THREAD_ID = env_int("ADMIN_THREAD_ID") or None  # тема в группе с темами, необязательно
+ADMIN_THREAD_ID = env_int("ADMIN_THREAD_ID") or None  # тема «ОБТ ОТЧЕТЫ» в группе администраторов
 ADMIN_IDS = env_ids("ADMIN_IDS")  # если задано, статусы могут менять только эти Telegram ID
-BETA_CHAT_ID = env_int("BETA_CHAT_ID")  # конференция ЗБТ: пользоваться ботом могут только её участники
-ALLOWED_IDS = env_ids("ALLOWED_IDS")  # Telegram ID, которым доступ разрешён всегда
 PROJECT_NAME = os.getenv("PROJECT_NAME", "Мой проект")
 BANNER_PATH = os.getenv("BANNER_PATH", "banner.jpg")  # картинка над меню, необязательно
 TZ_OFFSET = env_int("TZ_OFFSET_HOURS", 2)
-MAX_REPORTS_PER_DAY = env_int("MAX_REPORTS_PER_DAY", 20)
+MAX_REPORTS_PER_DAY = env_int("MAX_REPORTS_PER_DAY", 10)
 COOLDOWN_SECONDS = env_int("COOLDOWN_SECONDS", 60)
 MAX_EVIDENCE = 10
 DB_PATH = os.getenv("DB_PATH", "feedback.db")
@@ -78,7 +76,7 @@ EVIDENCE_TYPES = (
 T = {
     "start": (
         "Привет, <b>{name}</b>!\n\n"
-        "Это бот участников ЗБТ проекта <b>{project}</b>. Здесь можно сообщить о баге или проблеме "
+        "Это бот открытого бета-тестирования (ОБТ) проекта <b>{project}</b>. Здесь можно сообщить о баге или проблеме "
         "либо предложить идею по улучшению.\n\n"
         "Каждый отчёт получает номер, а о решении администрации вы узнаете в этом чате."
     ),
@@ -89,7 +87,6 @@ T = {
         "3. <b>Доказательства:</b> скриншоты, видео, файлы или ссылки. Можно отправить до 10 сообщений.\n\n"
         "Чем подробнее отчёт, тем быстрее мы сможем разобраться. Один отчёт описывает одну ситуацию."
     ),
-    "not_member": "Бот доступен только участникам ЗБТ. Если вы участник, убедитесь, что вы состоите в конференции ЗБТ.",
     "banned": "Доступ к отправке отчётов для вас ограничен администрацией.",
     "closed": "Приём отчётов сейчас приостановлен. Попробуйте позже.",
     "not_ready": "Бот ещё не настроен. Попробуйте позже.",
@@ -393,36 +390,11 @@ async def send_menu(bot: Bot, chat_id: int, name: str):
 
 
 # ───────────────────────── ДОСТУП ─────────────────────────
-_member_cache = {}  # user_id -> (участник ли, время проверки)
-
-
-async def is_participant(bot: Bot, user_id: int) -> bool:
-    """Проверяет, состоит ли пользователь в конференции ЗБТ. Без BETA_CHAT_ID бот открыт для всех."""
-    if not BETA_CHAT_ID:
-        return True
-    cached = _member_cache.get(user_id)
-    if cached and time.time() - cached[1] < 300:
-        return cached[0]
-    try:
-        member = await bot.get_chat_member(BETA_CHAT_ID, user_id)
-        status = str(getattr(member.status, "value", member.status))
-        ok = status in ("creator", "administrator", "member") or (
-            status == "restricted" and bool(getattr(member, "is_member", False))
-        )
-    except TelegramAPIError:
-        logging.warning("Не удалось проверить участие пользователя %s. Бот должен быть администратором конференции.", user_id)
-        ok = False
-    _member_cache[user_id] = (ok, time.time())
-    return ok
-
-
 async def check_access(bot: Bot, user_id: int, new_report: bool = False):
     """Возвращает текст причины отказа или None, если доступ есть."""
     row = get_user(user_id)
     if row and row["banned"]:
         return T["banned"]
-    if user_id not in ALLOWED_IDS and not await is_participant(bot, user_id):
-        return T["not_member"]
     if new_report:
         if not reports_open():
             return T["closed"]
@@ -1029,8 +1001,8 @@ async def main():
         raise SystemExit("Не задана переменная окружения BOT_TOKEN")
     if not ADMIN_CHAT_ID:
         logging.warning("ADMIN_CHAT_ID не задан: отчёты принимать некуда. Узнайте ID группы командой /chatid.")
-    if not BETA_CHAT_ID:
-        logging.warning("BETA_CHAT_ID не задан: ботом сможет пользоваться любой человек.")
+    if not ADMIN_THREAD_ID:
+        logging.warning("ADMIN_THREAD_ID не задан: отчёты придут в общий чат группы, а не в тему «ОБТ ОТЧЕТЫ».")
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(common_router)
